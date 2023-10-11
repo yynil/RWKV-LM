@@ -3,6 +3,10 @@
 ########################################################################################################
 
 import os, math, gc, importlib
+from typing import Any, Optional
+
+from more_itertools import pad_none
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 import torch
 # torch._C._jit_set_profiling_executor(True)
 # torch._C._jit_set_profiling_mode(True)
@@ -57,6 +61,9 @@ if os.environ["RWKV_FLOAT_MODE"] == "bf16":
             k = k.contiguous()
             v = v.contiguous()
             y = torch.empty((B, T, C), device=w.device, memory_format=torch.contiguous_format, dtype=torch.bfloat16)
+            u = u.to(dtype=torch.bfloat16)
+            k = k.to(dtype=torch.bfloat16)
+            v = v.to(dtype=torch.bfloat16)
             wkv_cuda.forward(B, T, C, w, u, k, v, y)
             ctx.save_for_backward(w, u, k, v, y)
             return y
@@ -979,7 +986,8 @@ class RWKV(pl.LightningModule):
         gc.collect()
         torch.cuda.empty_cache()
         return m
-        
+
+
 #this function is to reverse a padded sequence tensor
 #input tensor is a 2d tensor with shape [batch_size,seq_len], pad_id is a int
 #each row's real length is different, let's say it's N.
@@ -1209,6 +1217,340 @@ class BiRWKV(pl.LightningModule):
                 #     print('rank', self.global_rank, 'loss', loss.item(), 'lavg', sss / ccc)#, 'tmp', tmp, 'input', idx)
 
         return L2Wrap.apply(loss, logits)
+
+    def training_step_end(self, batch_parts):
+        if pl.__version__[0]!='2':
+            all = self.all_gather(batch_parts)
+            if self.trainer.is_global_zero:
+                self.trainer.my_loss_all = all
+
+    def generate_init_weight(self):
+        print(
+            f"""
+############################################################################
+#
+# Init model weight (slow for large models)...
+#
+############################################################################
+"""
+        )
+        m = {}
+        for n in self.state_dict():
+            p = self.state_dict()[n]
+            shape = p.shape
+
+            gain = 1.0
+            scale = 1.0
+            if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
+                if 'ln_x.weight' in n:
+                    layer_scale = (1+int(n.split('.')[1])) / self.args.n_layer
+                    m[n] = (p * 0.0) + (layer_scale ** 0.7)
+                else:
+                    m[n] = p
+            else:
+                if n == "emb.weight":
+                    scale = -1 * self.args.lr_init
+                else:
+                    if shape[0] > shape[1]:
+                        gain = math.sqrt(shape[0] / shape[1])
+                    if 'r' in os.environ["RWKV_MY_TESTING"]:
+                        zero = [".att.output.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']
+                    else:
+                        zero = [".att.key.", ".att.receptance.", ".att.output.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']
+                    for kk in zero:
+                        if kk in n:
+                            scale = 0
+                    if n == "head.weight":
+                        scale = 0.5
+                    if "head_k." in n:
+                        scale = 0.1
+                    if "head_q." in n:
+                        scale = 0
+
+                print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {str(scale).ljust(4)} {n}")
+
+                if self.args.accelerator.upper() == "GPU":
+                    m[n] = torch.empty((shape[0], shape[1]), device="cuda")
+                else:
+                    m[n] = torch.empty((shape[0], shape[1]))
+
+                if scale == 0:
+                    nn.init.zeros_(m[n])
+                elif scale < 0:
+                    nn.init.uniform_(m[n], a=scale, b=-scale)
+                else:
+                    nn.init.orthogonal_(m[n], gain=gain * scale)
+
+            m[n] = m[n].cpu()
+            if os.environ["RWKV_FLOAT_MODE"] == "fp16":
+                m[n] = m[n].half()
+            elif os.environ["RWKV_FLOAT_MODE"] == "bf16":
+                m[n] = m[n].bfloat16()
+
+            # if n == "emb.weight":
+            #     print(m[n])
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        return m
+
+
+class BiRWKVForTokenClassification(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.weights =torch.tensor(eval(args.labels_weights),dtype=torch.float32)
+        if not hasattr(args, 'dim_att'):
+            args.dim_att = args.n_embd
+        if not hasattr(args, 'dim_ffn'):
+            args.dim_ffn = args.n_embd * 4
+        if not hasattr(args, 'tiny_att_layer'):
+            args.tiny_att_layer = -1
+        if not hasattr(args, 'tiny_att_dim'):
+            args.tiny_att_dim = -1
+        assert args.n_embd % 32 == 0
+        assert args.dim_att % 32 == 0
+        assert args.dim_ffn % 32 == 0
+
+        self.emb = nn.Embedding(args.vocab_size, args.n_embd)
+
+        self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
+        self.rev_blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
+
+        self.ln_out = nn.LayerNorm(args.n_embd*2)
+        self.labels_head = nn.Linear(args.n_embd*2, args.labels_vocab_size, bias=False)
+        # self.head = nn.Linear(args.n_embd*2, args.vocab_size, bias=False)
+
+        if args.head_qk > 0:
+            self.head_q = nn.Linear(args.n_embd*2, args.head_qk, bias=False)
+            self.head_k = nn.Linear(args.n_embd*2, args.head_qk, bias=False)
+            self.register_buffer("copy_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
+        if args.dropout > 0:
+            self.drop0 = nn.Dropout(p = args.dropout)
+
+    def load_from_mlm_path(self, path):
+        print(f"Loading MLM from {path}")
+        state_dict = torch.load(path, map_location="cpu")
+        self.load_state_dict(state_dict, strict=False)
+        del state_dict
+        
+
+    def configure_optimizers(self):
+        args = self.args
+        
+        lr_decay = set()
+        lr_1x = set()
+        lr_2x = set()
+        lr_3x = set()
+        for n, p in self.named_parameters():
+            if ("time_mix" in n) and (args.layerwise_lr > 0):
+                if args.my_pile_stage == 2:
+                    lr_2x.add(n)
+                else:
+                    lr_1x.add(n)
+            elif ("time_decay" in n) and (args.layerwise_lr > 0):
+                if args.my_pile_stage == 2:
+                    lr_3x.add(n)
+                else:
+                    lr_2x.add(n)
+            elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
+                if args.my_pile_stage == 2:
+                    lr_2x.add(n)
+                else:
+                    lr_1x.add(n)
+            elif ("time_first" in n) and (args.layerwise_lr > 0):
+                lr_3x.add(n)
+            elif (len(p.squeeze().shape) >= 2) and (args.weight_decay > 0):
+                lr_decay.add(n)
+            else:
+                lr_1x.add(n)
+
+        lr_decay = sorted(list(lr_decay))
+        lr_1x = sorted(list(lr_1x))
+        lr_2x = sorted(list(lr_2x))
+        lr_3x = sorted(list(lr_3x))
+        # print('decay', lr_decay)
+        # print('1x', lr_1x)
+        # print('2x', lr_2x)
+        # print('3x', lr_3x)
+        param_dict = {n: p for n, p in self.named_parameters()}
+        
+        if args.layerwise_lr > 0:
+            if args.my_pile_stage == 2:
+                optim_groups = [
+                    {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
+                    {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 2e-3 / args.lr_init},
+                    {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 3e-3 / args.lr_init},
+                ]
+            else:
+                optim_groups = [
+                    {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
+                    {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
+                    {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 3.0},
+                ]
+        else:
+            optim_groups = [{"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0}]
+
+        if args.weight_decay > 0:
+            optim_groups += [{"params": [param_dict[n] for n in lr_decay], "weight_decay": args.weight_decay, "my_lr_scale": 1.0}]
+            if self.deepspeed_offload:
+                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
+        else:
+            if self.deepspeed_offload:
+                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
+            return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
+        # return ZeroOneAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False, cuda_aware=False)
+
+    @property
+    def deepspeed_offload(self) -> bool:
+        strategy = self.trainer.strategy
+        if isinstance(strategy, DeepSpeedStrategy):
+            cfg = strategy.config["zero_optimization"]
+            return cfg.get("offload_optimizer") or cfg.get("offload_param")
+        return False
+
+    def forward(self, idx):
+        args = self.args
+        if not hasattr(args, 'pad_id'):
+            pad_id = 1
+        else:
+            pad_id = args.pad_id
+        B, T = idx.size()
+        assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+        reversed_idx,real_lengths = reverse_sequence(idx,pad_id)
+        x = self.emb(idx)
+        x_emb = x
+        reversed_x = self.emb(reversed_idx)
+        reversed_emb = reversed_x
+
+        if args.dropout > 0:
+            x = self.drop0(x)
+        if args.tiny_att_dim > 0:
+            for block in self.blocks:
+                if args.grad_cp == 1:
+                    x = deepspeed.checkpointing.checkpoint(block, x, x_emb)
+                else:
+                    x = block(x, x_emb)
+            #calculate reverse x
+            for rev_block in self.rev_blocks:
+                if args.grad_cp == 1:
+                    reversed_x = deepspeed.checkpointing.checkpoint(rev_block, reversed_x, reversed_emb)
+                else:
+                    reversed_x = rev_block(reversed_x, reversed_emb)
+        else:
+            for block in self.blocks:
+                if args.grad_cp == 1:
+                    x = deepspeed.checkpointing.checkpoint(block, x)
+                else:
+                    x = block(x)
+            #calculate reverse x
+            for rev_block in self.rev_blocks:
+                if args.grad_cp == 1:
+                    reversed_x = deepspeed.checkpointing.checkpoint(rev_block, reversed_x)
+                else:
+                    reversed_x = rev_block(reversed_x)
+
+        #flip the reversed_x back to normal order with the real length
+        for i in range(B):
+            reversed_x[i,:real_lengths[i]] = torch.flip(reversed_x[i,:real_lengths[i]],dims=[0])
+        x = torch.cat([x, reversed_x], dim=2)
+        x = self.ln_out(x)
+
+        if args.head_qk > 0:
+            q = self.head_q(x)[:, :T, :]
+            k = self.head_k(x)[:, :T, :]
+            c = (q @ k.transpose(-2, -1)) * (1.0 / args.head_qk)
+            c = c.masked_fill(self.copy_mask[:T, :T] == 0, 0)
+
+            if "32" in os.environ["RWKV_FLOAT_MODE"]:
+                c = c @ F.one_hot(idx, num_classes=args.vocab_size)
+            elif os.environ["RWKV_FLOAT_MODE"] == "fp16":
+                c = c @ F.one_hot(idx, num_classes=args.vocab_size).half()
+            elif os.environ["RWKV_FLOAT_MODE"] == "bf16":
+                c = c @ F.one_hot(idx, num_classes=args.vocab_size).bfloat16()
+
+            x = self.labels_head(x) + c
+        else:
+            x = self.labels_head(x)
+
+        return x
+    
+    
+
+    def training_step(self, batch, batch_idx):
+        args = self.args
+        if args.my_qa_mask != 1:
+            idx, targets = batch
+            # idx = batch['src_input_ids']
+            # targets = batch['dst_input_ids']
+            logits = self(idx)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),self.weights.to(logits.device))
+            # if '0' in os.environ["RWKV_MY_TESTING"]:
+            #     print('logits', logits)
+            #     torch.set_printoptions(threshold=10000)
+            #     print('idx', idx)
+            #     exit(0)
+        else:
+            idx, targets, mask = batch
+            mask = mask.view(-1)
+            sum_mask = torch.sum(mask).item()
+            # if sum_mask == 0:
+            #     return torch.tensor([0.0], requires_grad=True)
+
+            logits = self(idx)
+            if sum_mask == mask.shape[0]:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),self.weights.to(logits.device))
+                # print('rank', self.global_rank, 'loss', loss.item())
+            else:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),self.weights.to(logits.device), reduction='none')
+                # loss_raw = loss
+                loss = torch.sum(loss * mask) / sum_mask
+
+                # torch.set_printoptions(threshold=10000)
+                # if True: #self.global_rank == 1:
+                #     tmp = ''
+                #     sss = 0
+                #     ccc = 0
+                #     for i in range(mask.shape[0]):
+                #         if mask[i] > 0:
+                #             tmp += str(idx.view(-1)[i].item()) + ','
+                #             sss += loss_raw.view(-1)[i].float().item()
+                #             ccc += 1
+                #     print('rank', self.global_rank, 'loss', loss.item(), 'lavg', sss / ccc)#, 'tmp', tmp, 'input', idx)
+
+        return L2Wrap.apply(loss, logits)
+    
+    def calculate_accuracy(self, logits, labels):
+        mask = (labels != -100)  # create a mask of valid labels
+        preds = torch.argmax(logits, dim=2)
+        correct = torch.sum((preds == labels) & mask)
+        total = torch.sum(mask)
+        accuracy = correct.float() / total.float()
+        return accuracy
+
+    def validation_step(self, batch, batch_idx):
+        args = self.args
+        if args.my_qa_mask != 1:
+            idx, targets = batch
+            logits = self(idx)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),self.weights.to(logits.device))
+            accuracy = self.calculate_accuracy(logits, targets)
+        else:
+            idx, targets, mask = batch
+            mask = mask.view(-1)
+            sum_mask = torch.sum(mask).item()
+
+            logits = self(idx)
+            if sum_mask == mask.shape[0]:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),self.weights.to(logits.device))
+            else:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),self.weights.to(logits.device), reduction='none')
+                loss = torch.sum(loss * mask) / sum_mask
+            accuracy = self.calculate_accuracy(logits, targets)
+        self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log('val_acc', accuracy, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
 
     def training_step_end(self, batch_parts):
         if pl.__version__[0]!='2':
