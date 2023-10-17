@@ -235,3 +235,7 @@ class RWKV_RNN(MyModule):
             x = w.head.weight @ x
 
             return x.float(), state
+
+
+class BiRWKVRNN(MyModule):
+    pass

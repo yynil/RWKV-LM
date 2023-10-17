@@ -307,7 +307,7 @@ if __name__ == "__main__":
     elif args.precision == "fp16":
         args.precision = 16
     else:
-        args.precision = "bf16"
+        args.precision = "bf16-mixed"
 
     ########################################################################################################
 
