@@ -47,17 +47,19 @@ def generate_mlm_data(words_ids :List[List[int]], mask_id :int = 3,min_id = 1025
     mlm_labels = []
     for word_ids in words_ids:
         r = random.random()
-        mlm_labels.extend(word_ids)
         if r < mlm_probability:
             #keep the word orginal
             mlm_input_ids.extend(word_ids)
+            mlm_labels.extend([-100] * len(word_ids))
         elif r < mlm_probability + random_probabilty:
             #replace the word with mask_id
             mlm_input_ids.extend([mask_id] * len(word_ids))
+            mlm_labels.extend(word_ids)
         else:
             #replace the word with random id between min_id and max_id inclusively
             random_ids = [random.randint(min_id, max_id) for _ in range(len(word_ids))]
             mlm_input_ids.extend(random_ids)
+            mlm_labels.extend(word_ids)
     return mlm_input_ids, mlm_labels
 
 def convert_llm_to_mlm_dataset(llm_dataset, tokenizer, fixed_length, pad_id,mask_token_id,min_id = 10250, max_id=18493):
