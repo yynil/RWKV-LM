@@ -1,6 +1,6 @@
 # The RWKV Language Model (and my LM tricks)
 
-> If you are new to RWKV, it would be better to find out more about us via our wiki first here: https://wiki.rwkv.com/
+> RWKV homepage: https://www.rwkv.com/ https://wiki.rwkv.com/
 
 ## RWKV: Parallelizable RNN with Transformer-level LLM Performance (pronounced as "RwaKuv", from 4 major params: R W K V)
 
@@ -8,15 +8,15 @@ RWKV is an RNN with Transformer-level LLM performance, which can also be directl
 
 So it's combining the best of RNN and transformer - **great performance, fast inference, saves VRAM, fast training, "infinite" ctx_len, and free sentence embedding** (using the final hidden state).
 
-**Raven 14B** (finetuned on Alpaca+ShareGPT+...) Demo: https://huggingface.co/spaces/BlinkDL/ChatRWKV-gradio
+**RWKV-5 World v2 1.5B** Demo: https://huggingface.co/spaces/BlinkDL/ChatRWKV-gradio
 
-**World 7B** (supports 100+ world languages) Demo: https://huggingface.co/spaces/BlinkDL/RWKV-World-7B
+![RWKV-v5-benchmark-1](RWKV-v5-benchmark-1.png)
+
+**RWKV-4 World v1 7B** Demo: https://huggingface.co/spaces/BlinkDL/RWKV-World-7B
 
 **RWKV GUI** https://github.com/josStorer/RWKV-Runner with one-click install and API
 
-**Download RWKV-4 0.1/0.4/1.5/3/7/14B weights**: https://huggingface.co/BlinkDL
-
-RWKV-4-World is the best model: generation & chat & code in 100+ world languages, with the best English zero-shot & in-context learning ability too.
+**Download all RWKV model weights**: https://huggingface.co/BlinkDL
 
 **RWKV pip package**: https://pypi.org/project/rwkv/
 
@@ -224,6 +224,34 @@ $`\left(\left[\begin{array}{ccc}
 \right)`$
 
 ### RWKV-6
+
+Dynamic Mix & Dynamic Decay. Example (do this for both TimeMix & ChannelMix):
+```
+TIME_MIX_EXTRA_DIM = 32
+self.time_mix_k_w1 = nn.Parameter(torch.empty(args.n_embd, TIME_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+self.time_mix_k_w2 = nn.Parameter(torch.zeros(TIME_MIX_EXTRA_DIM, args.n_embd))
+self.time_mix_v_w1 = nn.Parameter(torch.empty(args.n_embd, TIME_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+self.time_mix_v_w2 = nn.Parameter(torch.zeros(TIME_MIX_EXTRA_DIM, args.n_embd))
+self.time_mix_r_w1 = nn.Parameter(torch.empty(args.n_embd, TIME_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+self.time_mix_r_w2 = nn.Parameter(torch.zeros(TIME_MIX_EXTRA_DIM, args.n_embd))
+self.time_mix_g_w1 = nn.Parameter(torch.empty(args.n_embd, TIME_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+self.time_mix_g_w2 = nn.Parameter(torch.zeros(TIME_MIX_EXTRA_DIM, args.n_embd))
+...
+time_mix_k = self.time_mix_k.view(1,1,-1) + (x @ self.time_mix_k_w1) @ self.time_mix_k_w2
+time_mix_v = self.time_mix_v.view(1,1,-1) + (x @ self.time_mix_v_w1) @ self.time_mix_v_w2
+time_mix_r = self.time_mix_r.view(1,1,-1) + (x @ self.time_mix_r_w1) @ self.time_mix_r_w2
+time_mix_g = self.time_mix_g.view(1,1,-1) + (x @ self.time_mix_g_w1) @ self.time_mix_g_w2
+
+xx = self.time_shift(x)
+xk = x * time_mix_k + xx * (1 - time_mix_k)
+xv = x * time_mix_v + xx * (1 - time_mix_v)
+xr = x * time_mix_r + xx * (1 - time_mix_r)
+xg = x * time_mix_g + xx * (1 - time_mix_g)
+```
+
+![RWKV-v6](RWKV-v6.png)
+
+### RWKV-7
 
 Use parallelized mode to quickly generate the state, then use a finetuned full RNN (the layers of token n can use outputs of all layer of token n-1) for sequential generation.
 
