@@ -141,3 +141,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+.DS_Store
+RWKV-v4neo/src/model.py
