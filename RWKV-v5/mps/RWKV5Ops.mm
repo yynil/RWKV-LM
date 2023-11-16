@@ -71,8 +71,6 @@ torch::Tensor& dispatchRwkv5Forward(
             [computeEncoder setBuffer:getMTLBufferStorage(y) offset:y.storage_offset() * y.element_size() atIndex:9];
             MTLSize threads = MTLSizeMake(C/H, 1, 1);
             MTLSize groups = MTLSizeMake(B * H, 1, 1);
-            NSLog(@"threads: %d, %d, %d", threads.width, threads.height, threads.depth);
-            NSLog(@"groups: %d, %d, %d", groups.width, groups.height, groups.depth);
             
             // Encode the compute command.
             [computeEncoder dispatchThreadgroups:groups
@@ -190,8 +188,6 @@ void dispatchRwkv5Backward(
             [computeEncoder setBuffer:getMTLBufferStorage(du) offset:du.storage_offset() * du.element_size() atIndex:15];
             MTLSize threads = MTLSizeMake(C/H, 1, 1);
             MTLSize groups = MTLSizeMake(B * H, 1, 1);
-            NSLog(@"threads: %d, %d, %d", threads.width, threads.height, threads.depth);
-            NSLog(@"groups: %d, %d, %d", groups.width, groups.height, groups.depth);
 
             // Encode the compute command.
             [computeEncoder dispatchThreadgroups:groups
