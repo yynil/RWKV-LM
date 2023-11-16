@@ -1,15 +1,27 @@
-import src.model
-from src.model import WKV_5
-B = 32
-T = 128 
-C = 1024
-H = 16
+import os
+'''
+export RWKV_JIT_ON=1
+export RWKV_T_MAX=1024
+export RWKV_FLOAT_MODE=fp32
+'''
+os.environ['RWKV_JIT_ON'] = '1'
+os.environ['RWKV_T_MAX'] = '1024'
+os.environ['RWKV_FLOAT_MODE'] = 'fp32'
+os.environ['RWKV_HEAD_SIZE_A'] = '64'
 import torch
-r = torch.rand((B,T,C),device='mps',dtype=torch.float32)
-k = torch.rand((B,T,C),device='mps',dtype=torch.float32)
-v = torch.rand((B,T,C),device='mps',dtype=torch.float32)
-w = torch.rand(C,device='mps',dtype=torch.float32)
-u = torch.rand(C,device='mps',dtype=torch.float32)
-from src.model import RUN_CUDA_RWKV5
-y = RUN_CUDA_RWKV5(B,T,C,H,r,k,v,w,u)
-print(y)
+from argparse import Namespace
+args = Namespace()
+args.head_size_a=64
+args.head_size_divisor = 8
+args.dim_att = 1024
+args.layer_id = 0
+args.ctx_len = 1024
+args.n_embd = 1024
+args.dim_ffn = args.n_embd*4
+args.n_layer = 12
+from src.model import RWKV_TimeMix_RWKV5
+time_mix = RWKV_TimeMix_RWKV5(args,0).to('mps')
+B,T,C = 32,1024,1024
+x = torch.randn((B,T,C),dtype=torch.float32,device='mps')
+rwkv = time_mix(x)
+print(rwkv)
