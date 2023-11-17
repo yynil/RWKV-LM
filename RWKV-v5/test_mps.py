@@ -21,7 +21,9 @@ args.dim_ffn = args.n_embd*4
 args.n_layer = 12
 from src.model import RWKV_TimeMix_RWKV5
 time_mix = RWKV_TimeMix_RWKV5(args,0).to('mps')
-B,T,C = 32,1024,1024
+B,T,C = 1,1024,1024
 x = torch.randn((B,T,C),dtype=torch.float32,device='mps')
 rwkv = time_mix(x)
 print(rwkv)
+rwkv.backward(torch.ones_like(rwkv))
+print(x.grad)

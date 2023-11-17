@@ -5,6 +5,46 @@
 import logging
 logging.basicConfig(level=logging.INFO)
 
+import traceback
+import torch
+def load_ckpt_and_parse_args(ckpt_file, args):
+    try:
+        with torch.no_grad():
+            w = torch.load(ckpt_file, map_location='cpu') # load model to CPU first
+            import gc
+            gc.collect()
+            n_embd = w['emb.weight'].shape[1]
+            vocab_size = w['emb.weight'].shape[0]
+            dim_att = w['blocks.0.att.key.weight'].shape[0] # note: transposed matrix
+            dim_ffn = w['blocks.0.ffn.key.weight'].shape[0] # note: transposed matrix
+            n_layer = 0
+            keys = list(w.keys())
+            version = 4
+            for x in keys:
+                layer_id = int(x.split('.')[1]) if ('blocks.' in x) else 0
+                n_layer = max(n_layer, layer_id+1)
+                if 'ln_x' in x:
+                    version = max(5, version)
+                if 'gate.weight' in x:
+                    version = max(5.1, version)
+                if int(version) == 5 and 'att.time_decay' in x:
+                    n_head = w[x].shape[0]
+                    if len(w[x].shape) > 1:
+                        if w[x].shape[1] > 1:
+                            version = max(5.2, version)
+            head_size_a = dim_att // n_head
+            args.n_embd = n_embd
+            args.dim_att = dim_att
+            args.dim_ffn = dim_ffn
+            args.n_layer = n_layer
+            args.version = version
+            args.head_size_a = head_size_a
+            args.vocab_size = vocab_size
+            return w
+    except Exception as e:
+        traceback.print_exc()
+        return None
+
 if __name__ == "__main__":
     from argparse import ArgumentParser
     from pytorch_lightning import Trainer
@@ -85,7 +125,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ########################################################################################################
-
+    w = load_ckpt_and_parse_args(args.load_model, args)
     import os, warnings, math, datetime, sys, time
     import numpy as np
     import torch
@@ -204,7 +244,7 @@ if __name__ == "__main__":
     )
     rank_zero_info(str(vars(args)) + "\n")
 
-    assert args.data_type in ["utf-8", "utf-16le", "numpy", "binidx", "dummy", "uint16"]
+    assert args.data_type in ["utf-8", "utf-16le", "numpy", "binidx", "dummy", "uint16","datasets","json"]
 
     if args.lr_final == 0 or args.lr_init == 0:
         rank_zero_info("\n\nNote: lr_final = 0 or lr_init = 0. Using linear LR schedule instead.\n\n")
@@ -241,9 +281,16 @@ if __name__ == "__main__":
 
     from src.trainer import train_callback, generate_init_weight
     from src.dataset import MyDataset
-
-    train_data = MyDataset(args)
-    args.vocab_size = train_data.vocab_size
+    if args.data_file.endswith(".json"):
+        from finetuning_ds import convert_json_file_to_ds
+        train_data = convert_json_file_to_ds(None,args.data_file,args.ctx_len)
+    elif args.data_type == 'datasets':
+        print(f'load from datasets {args.data_file}')
+        from finetuning_ds import load_datasets
+        train_data = load_datasets(args.data_file)
+    else:
+        train_data = MyDataset(args)
+    # args.vocab_size = train_data.vocab_size
 
     from src.model import RWKV
     model = RWKV(args)
@@ -254,14 +301,7 @@ if __name__ == "__main__":
         args.load_model = init_weight_name
 
     rank_zero_info(f"########## Loading {args.load_model}... ##########")
-    try:
-        load_dict = torch.load(args.load_model, map_location="cpu")
-        load_keys = list(load_dict.keys())
-        for k in load_keys:
-            if k.startswith('_forward_module.'):
-                load_dict[k.replace('_forward_module.','')] = load_dict[k]
-                del load_dict[k]
-    except:
+    if w is None:
         rank_zero_info(f"Bad checkpoint {args.load_model}")
         if args.my_pile_stage >= 2:  # try again using another checkpoint
             max_p = args.my_pile_prev_p
@@ -271,14 +311,14 @@ if __name__ == "__main__":
                 args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
             args.epoch_begin = max_p + 1
             rank_zero_info(f"Trying {args.load_model}")
-            load_dict = torch.load(args.load_model, map_location="cpu")
+            w = torch.load(args.load_model, map_location="cpu")
 
     if args.load_partial == 1:
-        load_keys = load_dict.keys()
+        load_keys = w.keys()
         for k in model.state_dict():
             if k not in load_keys:
-                load_dict[k] = model.state_dict()[k]
-    model.load_state_dict(load_dict)
+                w[k] = model.state_dict()[k]
+    model.load_state_dict(w)
 
     if pl.__version__[0]=='2':
         trainer = Trainer(accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
