@@ -173,7 +173,7 @@ void dispatchRwkv5Backward(
             [computeEncoder setBytes:&B length:sizeof(int) atIndex:0];
             [computeEncoder setBytes:&T length:sizeof(int) atIndex:1];
             [computeEncoder setBytes:&C length:sizeof(int) atIndex:2];
-            [computeEncoder setBytes:&C length:sizeof(int) atIndex:3];
+            [computeEncoder setBytes:&H length:sizeof(int) atIndex:3];
             [computeEncoder setBuffer:getMTLBufferStorage(r) offset:r.storage_offset() * r.element_size() atIndex:4];
             [computeEncoder setBuffer:getMTLBufferStorage(k) offset:k.storage_offset() * k.element_size() atIndex:5];
             [computeEncoder setBuffer:getMTLBufferStorage(v) offset:v.storage_offset() * v.element_size() atIndex:6];
@@ -209,8 +209,8 @@ void wkv5_backward(
     torch::Tensor& r,
     torch::Tensor& k,
     torch::Tensor& v,
+    torch::Tensor& eew,
     torch::Tensor& ew,
-    torch::Tensor& w,
     torch::Tensor& u,
     torch::Tensor& dy,
     torch::Tensor& dr,
@@ -222,7 +222,7 @@ void wkv5_backward(
     check_device_and_contiguous(k, "k");
     check_device_and_contiguous(v, "v");
     check_device_and_contiguous(u, "u");
-    check_device_and_contiguous(w, "w");
+    check_device_and_contiguous(eew, "eew");
     check_device_and_contiguous(ew, "ew");
     check_device_and_contiguous(dy, "dy");
     check_device_and_contiguous(dk, "dk");
@@ -230,9 +230,22 @@ void wkv5_backward(
     check_device_and_contiguous(dw, "dw");
     check_device_and_contiguous(du, "du");
     dispatchRwkv5Backward(
-        B,T,C,H,
-        r,k,v,w,ew,u,
-        dy,dr,dk,dv,dw,du
+        B,
+        T,
+        C,
+        H,
+        r,
+        k,
+        v,
+        eew,
+        ew,
+        u,
+        dy,
+        dr,
+        dk,
+        dv,
+        dw,
+        du
     );
 }
 // Create Python bindings for the Objective-C++ code.
