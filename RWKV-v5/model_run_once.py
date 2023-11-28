@@ -67,7 +67,7 @@ if __name__ == '__main__':
     from rwkv.utils import PIPELINE, PIPELINE_ARGS
     pipeline = PIPELINE(model, "rwkv_vocab_v20230424") # 20B_tokenizer.json is in https://github.com/BlinkDL/ChatRWKV
 
-    #ctx = "\n繁城之下讲述了一个以明代为背景的故事。明万历年间，蠹县发生了一起连环凶杀案。蠹县刚正不阿的冷捕头被长杆穿过，钉死在麦田中央的稻草人之上，凶手还在尸体上附上字条：”吾将一道以贯之“。冷捕头的徒弟曲三更发誓要为师傅报仇，找到真凶。然而随着调查的深入，蠹县连续发生离奇命案，凶手都在凶案现场附上不同的字条。"
+    # ctx = "\n繁城之下讲述了一个以明代为背景的故事。明万历年间，蠹县发生了一起连环凶杀案。蠹县刚正不阿的冷捕头被长杆穿过，钉死在麦田中央的稻草人之上，凶手还在尸体上附上字条：”吾将一道以贯之“。冷捕头的徒弟曲三更发誓要为师傅报仇，找到真凶。然而随着调查的深入，蠹县连续发生离奇命案，凶手都在凶案现场附上不同的字条。"
     ctx = "\nIn a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
     print(ctx, end='')
 

@@ -8,9 +8,16 @@ import torch
 # torch._C._jit_set_profiling_mode(True)
 import torch.nn as nn
 from torch.nn import functional as F
+
+
 def __nop(ob):
     return ob
 
+
+def print_memory_usage():
+    process = psutil.Process()
+    memory_usage = process.memory_info().rss / 1024 / 1024  # in MB
+    print(f"Current memory usage: {memory_usage} MB")
 
 MyModule = nn.Module
 MyFunction = __nop
@@ -24,6 +31,7 @@ if "RWKV_JIT_ON" in os.environ and os.environ["RWKV_JIT_ON"] == "1":
 ########################################################################################################
 
 from torch.utils.cpp_extension import load
+import psutil
 
 HEAD_SIZE = 64
 if torch.backends.mps.is_available():
@@ -278,6 +286,15 @@ class RWKV(MyModule):
         self.ln_out = nn.LayerNorm(args.n_embd)
         self.head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
 
+    def eval(self):
+        super().eval()
+        self.emb_new = self.emb.to('cpu')
+        self.head_new = self.head.to('cpu')
+        del self.emb
+        del self.head
+        gc.collect()
+
+
 
     def forward(self, idx,state=None):
         with torch.no_grad():
@@ -285,9 +302,9 @@ class RWKV(MyModule):
                 idx_shape = idx.shape
                 if len(idx_shape) == 2:
                     idx = idx.squeeze(0)
-                idx = idx.to(self.device)
+                idx = idx.to('cpu')
             elif isinstance(idx,list):
-                idx = torch.tensor(idx,device=self.device,requires_grad=False)
+                idx = torch.tensor(idx,device='cpu',requires_grad=False)
             if state is None:
                 state = [None] * self.n_layer * 3
                 for i in range(self.n_layer): # state: 0=att_xx 1=att_kv 2=ffn_xx
@@ -295,7 +312,7 @@ class RWKV(MyModule):
                     state[i*3+1] = torch.zeros((self.n_head, self.head_size_a, self.head_size_a), dtype=torch.float32, requires_grad=False, device=self.device).contiguous()
                     state[i*3+2] = torch.zeros(self.n_embd, dtype=torch.float32, requires_grad=False, device=self.device).contiguous()
 
-            x = self.emb(idx)
+            x = self.emb_new(idx).to(self.device)
 
             for i, block in enumerate(self.blocks):
                 x,x_x,state_kv,state_ffn = block(x,state[i*3:i*3+3])
@@ -304,7 +321,7 @@ class RWKV(MyModule):
                 state[i*3+2] = state_ffn
 
             x = self.ln_out(x)
-
-            x = self.head(x)
+            
+            x = self.head_new(x.to('cpu'))
 
             return x[-1,:],state
