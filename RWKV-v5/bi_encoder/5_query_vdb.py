@@ -255,7 +255,7 @@ if __name__ == '__main__':
     parser.add_argument('--lora_ckpt', type=str, default='/media/yueyulin/bigdata/models/lora/rwkv1b5/be/trainable_model_0')
     parser.add_argument('--cross_encoder_ckpt', type=str, default='/media/yueyulin/bigdata/models/lora/rwkv1b5/ce_att_ffn/trainable_model_140000/')
 
-    parser.add_argument('--vdb_dir',type=str, default='/home/yueyulin/下载/novels_vdb')
+    parser.add_argument('--vdb_dir',type=str, default='/home/yueyulin/下载/laws_vdb')
     parser.add_argument('--chunk_size',type=int, default=1000)
     args = parser.parse_args()
 
