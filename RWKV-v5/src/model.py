@@ -41,7 +41,12 @@ from torch.utils.cpp_extension import load
 
 HEAD_SIZE = int(os.environ["RWKV_HEAD_SIZE_A"])
 if torch.cuda.is_available():
-    wkv5_cuda = load(name="wkv5", sources=["cuda/wkv5_op.cpp", f"cuda/wkv5_cuda.cu"],
+    cuda_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'cuda')
+    wkv5_cuda = load(name="wkv5", sources=[
+        os.path.join(cuda_dir,"wkv5_op.cpp"),
+        os.path.join(cuda_dir,"wkv5_cuda.cu")],
                 verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}"])
 elif torch.backends.mps.is_available():
     #mps_dir is on parrallel to __file__'s director
@@ -104,11 +109,14 @@ class WKV_5(torch.autograd.Function):
         @staticmethod
         def forward(ctx, B, T, C, H, r, k, v, w, u):
             with torch.no_grad():
-                assert r.dtype == torch.bfloat16
-                assert k.dtype == torch.bfloat16
-                assert v.dtype == torch.bfloat16
-                assert w.dtype == torch.bfloat16
-                assert u.dtype == torch.bfloat16
+                if r.dtype == torch.float:
+                    r = r.bfloat16()
+                if k.dtype == torch.float:
+                    k = k.bfloat16()
+                if v.dtype == torch.float:
+                    v = v.bfloat16()
+                if u.dtype == torch.float:
+                    u = u.bfloat16()
                 assert HEAD_SIZE == C // H
                 ctx.B = B
                 ctx.T = T
@@ -423,27 +431,28 @@ class RWKV(pl.LightningModule):
         lr_2x = set()
         lr_3x = set()
         for n, p in self.named_parameters():
-            if ("time_mix" in n) and (args.layerwise_lr > 0):
-                if args.my_pile_stage == 2:
-                    lr_2x.add(n)
-                else:
-                    lr_1x.add(n)
-            elif ("time_decay" in n) and (args.layerwise_lr > 0):
-                if args.my_pile_stage == 2:
+            if p.requires_grad == True:
+                if ("time_mix" in n) and (args.layerwise_lr > 0):
+                    if args.my_pile_stage == 2:
+                        lr_2x.add(n)
+                    else:
+                        lr_1x.add(n)
+                elif ("time_decay" in n) and (args.layerwise_lr > 0):
+                    if args.my_pile_stage == 2:
+                        lr_3x.add(n)
+                    else:
+                        lr_2x.add(n)
+                elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
+                    if args.my_pile_stage == 2:
+                        lr_2x.add(n)
+                    else:
+                        lr_1x.add(n)
+                elif ("time_first" in n) and (args.layerwise_lr > 0):
                     lr_3x.add(n)
-                else:
-                    lr_2x.add(n)
-            elif ("time_faaaa" in n) and (args.layerwise_lr > 0):
-                if args.my_pile_stage == 2:
-                    lr_2x.add(n)
+                elif (len(p.squeeze().shape) >= 2) and (args.weight_decay > 0):
+                    lr_decay.add(n)
                 else:
                     lr_1x.add(n)
-            elif ("time_first" in n) and (args.layerwise_lr > 0):
-                lr_3x.add(n)
-            elif (len(p.squeeze().shape) >= 2) and (args.weight_decay > 0):
-                lr_decay.add(n)
-            else:
-                lr_1x.add(n)
 
         lr_decay = sorted(list(lr_decay))
         lr_1x = sorted(list(lr_1x))
@@ -475,8 +484,8 @@ class RWKV(pl.LightningModule):
             optim_groups += [{"params": [param_dict[n] for n in lr_decay], "weight_decay": args.weight_decay, "my_lr_scale": 1.0}]
             if torch.backends.mps.is_available():
                 from torch.optim import AdamW,Adam,SGD
-                return SGD(optim_groups, lr=self.args.lr_init, momentum=0.9, weight_decay=args.weight_decay)
-                # return Adam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True,  weight_decay=args.weight_decay, amsgrad=False)
+                # return SGD(optim_groups, lr=self.args.lr_init, momentum=0.9, weight_decay=args.weight_decay)
+                return Adam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True,  weight_decay=args.weight_decay, amsgrad=False)
             else:
                 if self.deepspeed_offload:
                     return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
@@ -484,8 +493,8 @@ class RWKV(pl.LightningModule):
         else:
             if torch.backends.mps.is_available():
                 from torch.optim import AdamW, Adam,SGD
-                return SGD(optim_groups, lr=self.args.lr_init, momentum=0.9, weight_decay=0)
-                # return Adam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps,  weight_decay=0, amsgrad=False)
+                # return SGD(optim_groups, lr=self.args.lr_init, momentum=0.9, weight_decay=0)
+                return Adam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps,  weight_decay=0, amsgrad=False)
             else:
                 if self.deepspeed_offload:
                     return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False)

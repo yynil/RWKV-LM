@@ -45,6 +45,13 @@ if torch.backends.mps.is_available():
         extra_cflags=['-std=c++17'],
     )
     print('compile mps kernel successfully')
+elif torch.cuda.is_available():
+    cuda_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'cuda')
+    sources = [os.path.join(cuda_dir,'RWKV5Ops_run.cu'),os.path.join(cuda_dir,'RWKV5Ops_run.cpp')]
+    wkv5_cuda = load(name="wkv5_run", sources=sources, verbose=True,
+                    extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}"] )
 class WKV_5(torch.autograd.Function):
     if torch.backends.mps.is_available():
         @staticmethod
@@ -60,7 +67,26 @@ class WKV_5(torch.autograd.Function):
                 y = torch.zeros((B, T, C), device=r.device, dtype=torch.float32).contiguous() # .uniform_(-1, 1)
                 wkv5_mps.wkv5_forward(B, T, C, H,state, r, k, v, eew, u, y)
                 return y,state
-
+    elif torch.cuda.is_available():
+        @staticmethod
+        def forward(ctx, B, T, C, H,state, r, k, v, w, u):
+            with torch.no_grad():
+                if state.dtype != torch.float32:
+                    state = state.float()
+                if r.dtype != torch.bfloat16:
+                    r = r.bfloat16()
+                if k.dtype != torch.bfloat16:
+                    k = k.bfloat16()
+                if v.dtype != torch.bfloat16:
+                    v = v.bfloat16()
+                if u.dtype != torch.bfloat16:
+                    u = u.bfloat16()
+                
+                assert HEAD_SIZE == C // H
+                eew = (torch.exp(-torch.exp(w.float()))).contiguous()
+                y = torch.zeros((B, T, C), device=r.device, dtype=torch.bfloat16).contiguous()
+                wkv5_cuda.wkv5_forward(B, T, C, H,state, r, k, v, eew, u, y)
+                return y,state
 
 def RUN_CUDA_RWKV5(B, T, C, H,state, r, k, v, w, u):
     return WKV_5.apply(B, T, C, H,state, r, k, v, w, u)
@@ -174,8 +200,8 @@ class RWKV_ChannelMix(MyModule):
         self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
 
     @MyFunction
-    def forward(self, x,state_ffn):
-        #x is [T,C],state_ffn is [C]
+    def forward(self,x,state_ffn):
+        #x is [T,C],state _ffn is [C]
         xx = torch.cat((state_ffn.unsqueeze(0),x[:-1,:]))
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -263,7 +289,7 @@ class L2Wrap(torch.autograd.Function):
 
 
 class RWKV(MyModule):
-    def __init__(self, args,device='mps'):
+    def __init__(self, args,device='cuda'):
         super().__init__()
         self.args = args
         if not hasattr(args, 'dim_att'):
@@ -278,9 +304,9 @@ class RWKV(MyModule):
         self.emb = nn.Embedding(args.vocab_size, args.n_embd)
         self.n_layer = args.n_layer
         self.n_embd = args.n_embd
-        self.n_head = args.n_head
         self.n_att = args.dim_att
         self.head_size_a = args.head_size_a
+        self.n_head = args.dim_att // args.head_size_a
         self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
 
         self.ln_out = nn.LayerNorm(args.n_embd)
@@ -288,10 +314,8 @@ class RWKV(MyModule):
 
     def eval(self):
         super().eval()
-        self.emb_new = self.emb.to('cpu')
-        self.head_new = self.head.to('cpu')
-        del self.emb
-        del self.head
+        self.emb = self.emb.to('cpu')
+        self.head = self.head.to('cpu')
         gc.collect()
 
 
@@ -312,7 +336,7 @@ class RWKV(MyModule):
                     state[i*3+1] = torch.zeros((self.n_head, self.head_size_a, self.head_size_a), dtype=torch.float32, requires_grad=False, device=self.device).contiguous()
                     state[i*3+2] = torch.zeros(self.n_embd, dtype=torch.float32, requires_grad=False, device=self.device).contiguous()
 
-            x = self.emb_new(idx).to(self.device)
+            x = self.emb(idx).to(self.device)
 
             for i, block in enumerate(self.blocks):
                 x,x_x,state_kv,state_ffn = block(x,state[i*3:i*3+3])
@@ -322,6 +346,6 @@ class RWKV(MyModule):
 
             x = self.ln_out(x)
             
-            x = self.head_new(x.to('cpu'))
+            x = self.head(x.to('cpu').bfloat16())
 
             return x[-1,:],state
