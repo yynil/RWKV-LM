@@ -114,21 +114,25 @@ class RwkvForClassification(pl.LightningModule):
                 # return SGD(optim_groups, lr=self.args.lr_init, momentum=0.9, weight_decay=args.weight_decay)
                 return Adam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps, bias_correction=True,  weight_decay=args.weight_decay, amsgrad=False)
             else:
-                return FusedAdam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
+                from deepspeed.ops.adam import DeepSpeedCPUAdam
+                return DeepSpeedCPUAdam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps, bias_correction=True,  weight_decay=args.weight_decay, amsgrad=False)
+                # return FusedAdam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
         else:
             if torch.backends.mps.is_available():
                 from torch.optim import AdamW, Adam,SGD
                 # return SGD(optim_groups, lr=self.args.lr_init, momentum=0.9, weight_decay=0)
                 return Adam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps,  weight_decay=0, amsgrad=False)
             else:
-                return FusedAdam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps, adam_w_mode=False, weight_decay=0, amsgrad=False)
+                from deepspeed.ops.adam import DeepSpeedCPUAdam
+                return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False)
+                # return FusedAdam(optim_groups, lr=args.lr_init, betas=args.betas, eps=args.adam_eps, adam_w_mode=False, weight_decay=0, amsgrad=False)
     
     def training_step(self, batch, batch_idx):
         idx, label = batch
         logits = self.forward(idx)
         if self.num_labels == 1:
             loss_fct = nn.MSELoss()
-            label = label.float()
+            label = label.bfloat16()
             loss = loss_fct(logits.squeeze(), label.squeeze())
         else:
             loss_fct = nn.CrossEntropyLoss()

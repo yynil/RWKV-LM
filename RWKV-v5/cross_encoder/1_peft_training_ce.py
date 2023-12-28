@@ -405,7 +405,7 @@ if __name__ == '__main__':
 
     
 
-    trainer = Trainer(accelerator=device,strategy="auto",devices=1,num_nodes=1,precision=precision,
+    trainer = Trainer(accelerator=device,strategy="deepspeed_stage_2_offload",devices=1,num_nodes=1,precision=precision,
             logger=args.logger,callbacks=[YueyuTrainCallback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
             log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
 
