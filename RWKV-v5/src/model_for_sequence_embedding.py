@@ -137,13 +137,13 @@ class RwkvForSequenceEmbedding(pl.LightningModule):
         return loss_fct(positive_scores-negative_scores, labels)
     
 class RwkvForSequenceEmbedding_Run(pl.LightningModule):
-    def __init__(self, rwkvModel, device = 'cuda',chunk_size=128):
+    def __init__(self, rwkvModel, device = 'cuda',chunk_size=128,delete_head=False):
         super(RwkvForSequenceEmbedding_Run, self).__init__()
         self.rwkvModel = rwkvModel
-        if hasattr(self.rwkvModel, 'head'):
+        if hasattr(self.rwkvModel, 'head') and delete_head:
             del self.rwkvModel.head
         else:
-            print("self.rwkvModel does not have a 'head' attribute")
+            print("self.rwkvModel does not have a 'head' attribute or delete_head is False [{delete_head}]")
         self.my_device = device
         self.chunk_size = chunk_size
 

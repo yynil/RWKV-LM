@@ -11,6 +11,8 @@ from rwkv.rwkv_tokenizer import TRIE_TOKENIZER
 from .model_for_classification import RwkvForClassification_Run
 from .model_for_sequence_embedding import RwkvForSequenceEmbedding_Run  
 from torch.amp import autocast
+from peft.tuners.tuners_utils import BaseTunerLayer
+from peft.utils.other import ModulesToSaveWrapper
 
 def set_adapter(model, adapter_name: str | list[str]) -> None:
     """Set the active adapter(s).
@@ -25,6 +27,10 @@ def set_adapter(model, adapter_name: str | list[str]) -> None:
                 module.unmerge()
             module.set_adapter(adapter_name)
     
+def set_adapter_layers(model, enabled: bool = True) -> None:
+    for module in model.modules():
+        if isinstance(module, (BaseTunerLayer, ModulesToSaveWrapper)):
+            module.enable_adapters(enabled)
 
 def load_ckpt_and_parse_args(ckpt_file, args):
     try:
@@ -165,7 +171,7 @@ def load_model(args,bi_adapter_name = 'bi_adapter',cross_adapter_name = 'cross_a
     ce_model = ce_model.bfloat16()
     ce_model = ce_model.to('cuda')
     ce_model.eval()
-    return bi_model,ce_model,tokenizer
+    return bi_model,ce_model,tokenizer,model
 def inference(model: RwkvForSequenceEmbedding_Run,  tokenizer :TRIE_TOKENIZER,texts :str):
     cls_id = 1
     input_str = texts

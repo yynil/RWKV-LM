@@ -315,9 +315,6 @@ class RWKV(MyModule):
     def eval(self):
         super().eval()
         self.emb = self.emb.to('cpu')
-        self.head = self.head.to('cpu')
-        gc.collect()
-
 
 
     def forward(self, idx,state=None):
@@ -346,6 +343,6 @@ class RWKV(MyModule):
 
             x = self.ln_out(x)
             
-            x = self.head(x.to('cpu').bfloat16())
+            x = self.head(x.bfloat16())
 
             return x[-1,:],state

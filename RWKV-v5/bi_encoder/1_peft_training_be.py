@@ -229,6 +229,7 @@ if __name__ == '__main__':
     parser.add_argument('--tuner', type=str, default='lora', help='tuner type', choices=['lora'])
     parser.add_argument('--output_dir', type=str, default=None, help='peft output dir')
     parser.add_argument('--device', type=str, default="cuda", help='trainer device')
+    parser.add_argument('--lora_ckpt', type=str, default=None, help='lora ckpt')
     cmd_args = parser.parse_args()
     model_file = cmd_args.model_file
     args = Namespace()
@@ -263,28 +264,68 @@ if __name__ == '__main__':
     model.load_state_dict(w)
     del w
     if cmd_args.tuner =='lora':
-
-        lora_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
-            lora_alpha=16,
-            lora_dropout=0.1,
-            r=64,
-            bias="none",
-            target_modules=["ffn.receptance","ffn.key","ffn.value","att.receptance","att.key","att.value"],)
-        model = inject_adapter_in_model(lora_config, model)
-        print(model)
-        args.peft_config = lora_config
-        # model = get_peft_model(model, peft_config)
-        # print(model)
-        # exit(0)
-        for name, param in model.named_parameters():
-            if 'lora_' in name:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
+        max_steps = 0
+        lora_weights = None
+        if cmd_args.lora_ckpt is None:
+            lora_config = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                lora_alpha=16,
+                lora_dropout=0.1,
+                r=64,
+                bias="none",
+                target_modules=["ffn.receptance","ffn.key","ffn.value","att.receptance","att.key","att.value"],)
+            model = inject_adapter_in_model(lora_config, model)
+            print(model)
+            args.peft_config = lora_config
+            # model = get_peft_model(model, peft_config)
+            # print(model)
+            # exit(0)
+            for name, param in model.named_parameters():
+                if 'lora_' in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+            args.from_steps = 0
+        else:
+            dirs = os.listdir(cmd_args.lora_ckpt)
+            max_steps = 0
+            for dir in dirs:
+                #dir looks like trainable_model_70000
+                if os.path.isdir(os.path.join(cmd_args.lora_ckpt,dir)):
+                    if dir.startswith('trainable_model_'):
+                        steps = int(dir.split('_')[-1])
+                        if steps > max_steps:
+                            max_steps = steps
+            print('max_steps',max_steps)
+            base_model_file = os.path.basename(model_file)
+            lora_ckpt_file = os.path.join(cmd_args.lora_ckpt,f'trainable_model_{max_steps}/{base_model_file}_lora.pth')
+            lora_config_file = os.path.join(cmd_args.lora_ckpt,f'trainable_model_{max_steps}/{base_model_file}_peft.json')
+            print('load lora ckpt from',lora_ckpt_file, ' with config ',lora_config_file)
+            with open(lora_config_file) as f:
+                lora_config = json.load(f)
+                lora_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM,
+                    lora_alpha=lora_config['lora_alpha'],
+                    lora_dropout=lora_config['lora_dropout'],
+                    r=lora_config['r'],
+                    bias=lora_config['bias'],
+                    target_modules=lora_config['target_modules'],)
+            model = inject_adapter_in_model(lora_config, model)
+            lora_weights = torch.load(lora_ckpt_file)
+            args.peft_config = lora_config
+            for name, param in model.named_parameters():
+                if 'lora_' in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+            args.from_steps = max_steps+1
     print('---------------------------------------')
     model = RwkvForSequenceEmbedding(model)
     print(model)
+    if lora_weights is not None:
+        inform = model.load_state_dict(lora_weights,strict=False)
+        print("\033[92m", inform, "\033[0m")
+        del lora_weights
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

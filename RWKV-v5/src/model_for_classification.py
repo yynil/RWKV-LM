@@ -137,14 +137,14 @@ class RwkvForClassification(pl.LightningModule):
         return loss
     
 class RwkvForClassification_Run(pl.LightningModule):
-    def __init__(self, rwkvModel, num_labels=1,pad_id = 0,device = 'cuda',chunk_size=128):
+    def __init__(self, rwkvModel, num_labels=1,pad_id = 0,device = 'cuda',chunk_size=128,delete_head=False):
         super(RwkvForClassification_Run, self).__init__()
         self.pad_id = pad_id
         self.rwkvModel = rwkvModel
-        if hasattr(self.rwkvModel, 'head'):
+        if hasattr(self.rwkvModel, 'head') and delete_head:
             del self.rwkvModel.head
         else:
-            print("self.rwkvModel does not have a 'head' attribute")
+            print("self.rwkvModel does not have a 'head' attribute or delete_head is False [{delete_head}]")
         self.score = nn.Linear(rwkvModel.args.n_embd, num_labels,bias=False)
         self.num_labels = num_labels
         self.my_device = device

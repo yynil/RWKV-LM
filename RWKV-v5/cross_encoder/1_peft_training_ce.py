@@ -167,7 +167,7 @@ class YueyuTrainCallback(pl.Callback):
         if trainer.is_global_zero:  # logging   
             if batch_idx % args.save_per_batches == 0:
                 print(f'saving trainable to {args.trainable_dir_output}')
-                output_dir = f"{args.trainable_dir_output}_{batch_idx}"
+                output_dir = f"{args.trainable_dir_output}_{batch_idx+self.args.from_steps}"
                 save_trainable_parameters(pl_module, output_dir, args.model_file,args.peft_config)
             t_now = time.time_ns()
             kt_s = 0
@@ -229,6 +229,7 @@ if __name__ == '__main__':
     parser.add_argument('--tuner', type=str, default='lora', help='tuner type', choices=['prefix', 'lora'])
     parser.add_argument('--output_dir', type=str, default=None, help='peft output dir')
     parser.add_argument('--device', type=str, default="cuda", help='trainer device')
+    parser.add_argument('--lora_ckpt', type=str, default=None, help='lora ckpt')
     cmd_args = parser.parse_args()
     model_file = cmd_args.model_file
     args = Namespace()
@@ -263,28 +264,66 @@ if __name__ == '__main__':
     model.load_state_dict(w)
     del w
     if cmd_args.tuner =='lora':
+        lora_weights = None
+        if cmd_args.lora_ckpt is None:
+            lora_config = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                lora_alpha=16,
+                lora_dropout=0.1,
+                r=64,
+                bias="none",
+                target_modules=["ffn.receptance","ffn.key","ffn.value","att.receptance","att.key","att.value"],)
+            model = inject_adapter_in_model(lora_config, model)
+            print(model)
+            args.peft_config = lora_config
+            for name, param in model.named_parameters():
+                if 'lora_' in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+            args.from_steps = 0
+        else:
+            dirs = os.listdir(cmd_args.lora_ckpt)
+            max_steps = 0
+            for dir in dirs:
+                #dir looks like trainable_model_70000
+                if os.path.isdir(os.path.join(cmd_args.lora_ckpt,dir)):
+                    if dir.startswith('trainable_model_'):
+                        steps = int(dir.split('_')[-1])
+                        if steps > max_steps:
+                            max_steps = steps
+            print('max_steps',max_steps)
+            base_model_file = os.path.basename(model_file)
+            lora_ckpt_file = os.path.join(cmd_args.lora_ckpt,f'trainable_model_{max_steps}/{base_model_file}_lora.pth')
+            lora_config_file = os.path.join(cmd_args.lora_ckpt,f'trainable_model_{max_steps}/{base_model_file}_peft.json')
+            print('load lora ckpt from',lora_ckpt_file, ' with config ',lora_config_file)
+            with open(lora_config_file) as f:
+                lora_config = json.load(f)
+                lora_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM,
+                    lora_alpha=lora_config['lora_alpha'],
+                    lora_dropout=lora_config['lora_dropout'],
+                    r=lora_config['r'],
+                    bias=lora_config['bias'],
+                    target_modules=lora_config['target_modules'],)
+            model = inject_adapter_in_model(lora_config, model)
+            lora_weights = torch.load(lora_ckpt_file)
+            args.peft_config = lora_config
+            for name, param in model.named_parameters():
+                if 'lora_' in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+            args.from_steps = max_steps+1
 
-        lora_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
-            lora_alpha=16,
-            lora_dropout=0.1,
-            r=64,
-            bias="none",
-            target_modules=["ffn.receptance","ffn.key","ffn.value","att.receptance","att.key","att.value"],)
-        model = inject_adapter_in_model(lora_config, model)
-        print(model)
-        args.peft_config = lora_config
-        # model = get_peft_model(model, peft_config)
-        # print(model)
-        # exit(0)
-        for name, param in model.named_parameters():
-            if 'lora_' in name:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
     print('---------------------------------------')
     model = RwkvForClassification(model,1)
     print(model)
+    if lora_weights is not None:
+        inform = model.load_state_dict(lora_weights,strict=False)
+        print("\033[92m", inform, "\033[0m")
+        del lora_weights
+    
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -339,7 +378,16 @@ if __name__ == '__main__':
     args.my_exit_tokens = 0
     args.proj_dir = cmd_args.output_dir
     args.my_timestamp = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    args.wandb = 'rwkv5_cross_encoder_att_ffn'
+    if '1B5' in args.model_file:
+        args.wandb = 'rwkv5_cross_encoder_att_ffn_1b5'
+    elif '3B' in args.model_file:
+        args.wandb = 'rwkv5_cross_encoder_att_ffn_3b'
+    elif '0.4B' in args.model_file:
+        args.wandb = 'rwkv5_cross_encoder_att_ffn_0.4b'
+    elif '7b' in args.model_file or '7B' in args.model_file:
+        args.wandb = 'rwkv5_cross_encoder_att_ffn_7b'
+    else:
+        args.wandb = 'rwkv5_cross_encoder_att_ffn_'+args.model_file.split('/')[-1]
     args.run_name = 'yy' 
     args.my_qa_mask = 0
     args.num_nodes = 1

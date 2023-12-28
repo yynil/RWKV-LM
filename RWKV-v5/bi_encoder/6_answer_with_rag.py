@@ -128,7 +128,6 @@ def inference_rerank(model: RwkvForClassification_Run, template: str, tokenizer 
     input_ids = tokenizer.encode(input_str)+[cls_id]
     with autocast(device_type='cuda',dtype=torch.bfloat16):
         logits = model(torch.tensor([input_ids]).long())
-    print(logits)
     return logits
 
 def read_text_file(file_name :str):
@@ -175,12 +174,12 @@ def generate(pipeline : PIPELINE,ctx :str):
     gen_cnt = 0
 
 
-from src.lora_utilities import load_model, set_adapter
+from src.lora_utilities import load_model, set_adapter,set_adapter_layers
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--answer_model', type=str, default='/media/yueyulin/bigdata/models/rwkv5/rwkv-x052-7b-world-v2-79%trained-20231208-ctx4k.pth')
+    parser.add_argument('--answer_model', type=str, default='/media/yueyulin/bigdata/models/rwkv5/RWKV-5-World-1B5-v2-20231025-ctx4096.pth')
     parser.add_argument('--type', type=str, default='lora', choices=['full', 'lora'])
     parser.add_argument('--ckpt', type=str, default='/media/yueyulin/bigdata/models/rwkv5/RWKV-5-World-1B5-v2-20231025-ctx4096.pth')
     parser.add_argument('--lora_ckpt', type=str, default='/media/yueyulin/bigdata/models/lora/rwkv1b5/be/trainable_model_0')
@@ -191,8 +190,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     bi_adapter_name = 'bi_adapter'
     cross_adapter_name = 'cross_adapter'
-    bi_model,ce_model,tokenizer = load_model(args,bi_adapter_name=bi_adapter_name,cross_adapter_name=cross_adapter_name)
-    answer_model = from_pretrained(args.answer_model,args)
+    args.is_reuse_answer_model = args.answer_model == args.ckpt
+    bi_model,ce_model,tokenizer,model = load_model(args,bi_adapter_name=bi_adapter_name,cross_adapter_name=cross_adapter_name)
+    if args.is_reuse_answer_model:
+        answer_model = model
+    else:
+        answer_model = from_pretrained(args.answer_model,args)
     pipeline = PIPELINE(answer_model, "rwkv_vocab_v20230424") 
     client = chromadb.PersistentClient(path=args.vdb_dir)
     collection = client.create_collection(
@@ -202,36 +205,50 @@ if __name__ == '__main__':
     )
     import datetime
     template = "【问题：{query}\n文档：{document}\n】" 
-    ctx = "Instruction：给你一段法律文本和行为描述。说明该行为和法律文本之间的联系。回答结束输出符号】\nInput:行为描述：\n{action}\n法律文本：\n{law}\nResponse:\n根据以上信息，"
+    ctx = "Instruction:法条：\n{law}\n请根据以上法条回答以下问题。\nInput:问题：{action}\nAssistant:\n"
 
     while True:
+        set_adapter_layers(bi_model,True)
         query = input('query:')
         if query == 'exit':
             break
         start = datetime.datetime.now()
         set_adapter(bi_model,bi_adapter_name)
         end = datetime.datetime.now()
-        print('set_adapter time:',end-start)
+        switch_adapter_time = end-start
+        start = datetime.datetime.now()
         query_embedding = inference(bi_model,tokenizer,query).tolist()
+        end = datetime.datetime.now()
+        bi_encoder_time = end-start
+        start = datetime.datetime.now()
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=10,
         )
+        end = datetime.datetime.now()
+        query_vdb_time = end-start
         ids = results['ids'][0]
         distances = results['distances'][0]
         documents = results['documents'][0]
-        start = datetime.datetime.now()
         set_adapter(ce_model,cross_adapter_name)
-        end = datetime.datetime.now()
-        print('set_adapter time:',end-start)
         re_rank_scores = []
+        start = datetime.datetime.now()
         for i in range(len(ids)):
             re_rank_scores.append(inference_rerank(ce_model,template,tokenizer,query,documents[i]))
-        print(re_rank_scores)
+        end = datetime.datetime.now()
+        rerank_time = end-start
         # Sort documents based on re_rank_scores
         sorted_documents = [(score,doc) for score, doc in sorted(zip(re_rank_scores, documents), key=lambda x: x[0] , reverse=True)]
+        set_adapter_layers(answer_model,False)
         for i in range(len(sorted_documents)):
             score,doc = sorted_documents[i]
-            if score >= 0.8:
-                generate(pipeline,ctx.format(law=doc,action=query))
+            print(f'score is {score}')
+            if score >= 0.7:
+                start = datetime.datetime.now()
+                input_str = ctx.format(law=doc,action=query)
+                print(input_str)
+                generate(pipeline,input_str)
+                end = datetime.datetime.now()
+                generate_time = end-start
                 print('\033[91m参考法律条文：',doc,'\033[00m')
+                print('\033[91m生成时间：',generate_time,'set adapter time ',switch_adapter_time,'，vdb_query_time is ',query_vdb_time,', rerank time is ',rerank_time,',bi-encode time ',bi_encoder_time, '\033[00m')

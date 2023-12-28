@@ -288,6 +288,7 @@ if __name__ == '__main__':
 
         re_rank_scores = []
         for i in range(len(ids)):
+            print(ids[i],distances[i],documents[i])
             re_rank_scores.append(inference_rerank(ce_model,template,tokenizer,query,documents[i]))
         print(re_rank_scores)
         # Sort documents based on re_rank_scores
