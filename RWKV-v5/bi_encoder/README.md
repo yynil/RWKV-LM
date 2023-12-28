@@ -20,6 +20,6 @@ Lora微调用模型为RWKV51b5,回答模型也是为RWKV5 1B5,在加载的时候
 
 ![查询示例](5qdb.png)
 
-6_anwser_with_rag.py 在5的基础上，使用3B作为问题回答模型。形成一个完整的本地RAG应用。
+6_anwser_with_rag.py 一个完整的本地RAG应用。支持三个模型公用一个基础模型。
 
 ![rag](6rag.png)
