@@ -18,37 +18,27 @@ https://huggingface.co/datasets/togethercomputer/Long-Data-Collections/blob/main
 
 ```mermaid
 graph TD;
-    A-->B;
-    A-->C;
-    B-->D;
-    C-->D;
-```
-
-
-```mermaid
-graph TD;
-    A[开始];
-    B[读取jsonl中一行数据];
-    C[将数据转化成json对象];
-    D[解析出question字符串，documents数组，gold document id，answer字符串，long answer字符串];
-    E[用bm25 rank对query和documents关联性打分];
-    F[选出除了gold document之外最不相关的文章];
-    G[赋值positive为gold document，negative为最不相关文章];
-    H[返回包含question，answer, long answer, positive, negative的json对象，并且转化成json字符串];
-    I[存入输出的jsonl文件];
-    J{还有更多数据吗?};
-    A --> B;
-    B --> C;
-    C --> D;
-    D --> E;
-    E --> F;
-    F --> G;
-    G --> H;
-    H --> I;
-    I --> J;
-    J -- 是 --> B;
-    J -- 否 --> K[结束];
-
+A[开始]
+B[读取jsonl中一行数据]
+C[将数据转化成json对象]
+D[解析出question字符串，documents数组，gold document id，answer符串，long answer字符串]
+E[用bm25 rank对query和documents关联性打分]
+F[选出除了gold document之外最不相关的文章]
+G[赋值positive为gold document，negative为最不相关文章]
+H[返回包含question，answer, long answer, positive, negativejson对象，并且转化成json字符串]
+I[存入输出的jsonl文件]
+J{还有更多数据吗?}
+A --> B
+B --> C
+C --> D
+D --> E
+E --> F
+F --> G
+G --> H
+H --> I
+I --> J
+J -- 是 --> B
+J -- 否 --> K[结束]
 ```
 
 运行脚本为：
