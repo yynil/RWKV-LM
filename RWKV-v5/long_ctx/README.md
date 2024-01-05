@@ -1,6 +1,3 @@
----
-mermaid: true
----
 
 # 制作超长文本Cross Encoder训练数据
 
@@ -18,6 +15,15 @@ https://huggingface.co/datasets/togethercomputer/Long-Data-Collections/blob/main
 
 ## 0. 创建jsonl数据集
 流程为：
+
+```mermaid
+graph TD;
+    A-->B;
+    A-->C;
+    B-->D;
+    C-->D;
+```
+
 
 ```mermaid
 graph TD;
