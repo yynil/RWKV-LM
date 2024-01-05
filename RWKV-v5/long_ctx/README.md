@@ -1,3 +1,7 @@
+---
+mermaid: true
+---
+
 # 制作超长文本Cross Encoder训练数据
 
 ## 数据集
