@@ -6,6 +6,11 @@ Query/Document数据集，用自然语言提问，返回选中的文档。
 
 ## 下载数据集
 
+数据集为long_collection的自然语言提问数据集。具体链接为：
+https://huggingface.co/datasets/togethercomputer/Long-Data-Collections/blob/main/fine-tune/natural_questions_10_200_docs.jsonl.zst
+
+解压缩之后是一个jsonl文件。
+
 
 ## 0. 创建jsonl数据集
 流程为：
@@ -41,7 +46,7 @@ graph TD
 python long_ctx 0_create_q_p_n.py --input_file 下载的jsonl文件 --output_file 输出的包含query/positive/negative的jsonl --num_splits 多少个进程
 ```
 
-这个程序用状态机实现了一个最简单的tokenizer/parser，多少个cpu就用多少个进程来做。
+这个程序用状态机实现了一个最简单的tokenizer/parser，多少个cpu就用多少个进程来做。个别在状态机之外的异常，就抛弃了，比例很低。
 
 ## 1. 创建datasets
 
