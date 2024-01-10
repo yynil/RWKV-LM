@@ -371,7 +371,7 @@ if __name__ == '__main__':
     args.my_pile_edecay = 0
     args.layerwise_lr = 1
     args.epoch_begin = 0
-    args.epoch_count = 1 
+    args.epoch_count = 1111 
     args.epoch_save = 1
     args.epoch_steps = 1000
     args.max_epochs = args.epoch_count

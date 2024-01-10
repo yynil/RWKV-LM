@@ -4,17 +4,24 @@ if __name__ == '__main__':
     ds = load_from_disk(ds_dir)
     print(ds)
 
-    p_len = []
-    n_len = []
+    import numpy as np
+    from tqdm import tqdm
+    progress = tqdm(total=len(ds['train']))
+    pos = []
+    neg = []
     for data in ds['train']:
         question = data['question']
         positive = data['positive']
         negative = data['negative']
         q_p_len = len(question) + len(positive)+2
         q_n_len = len(question) + len(negative)+2
-        p_len.append(q_p_len)
-        n_len.append(q_n_len)
+        pos.append(q_p_len)
+        neg.append(q_n_len)
+        progress.update(1)
+    pos_arr = np.array(pos)
+    neg_arr = np.array(neg)
+    
+    np.save('/media/yueyulin/KINGSTON/data/natural_questions_10_200_docs_q_p_n_tokenized_ds/pos_arr.npy',pos_arr)
+    np.save('/media/yueyulin/KINGSTON/data/natural_questions_10_200_docs_q_p_n_tokenized_ds/neg_arr.npy',neg_arr)
 
-    import numpy as np
-    print(f'positive length: mean {np.mean(p_len)}, max {np.max(p_len)}, min {np.min(p_len)}')
-    print(f'negative length: mean {np.mean(n_len)}, max {np.max(n_len)}, min {np.min(n_len)}')
+    

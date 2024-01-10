@@ -61,7 +61,7 @@ if __name__ == '__main__':
 
     from functools import partial
     pad_and_truncate_examples_fn = partial(pad_and_truncate_examples, max_length=max_length, sep_token_id=sep_token_id, cls_token_id=cls_token_id, is_truncate=is_truncate, pad_token_id=pad_token_id)
-    ds = ds.map(pad_and_truncate_examples_fn, batched=True, num_proc=24, batch_size=24, remove_columns=['question', 'answer', 'long_answer', 'positive', 'negative'])
+    ds = ds.map(pad_and_truncate_examples_fn, batched=True, num_proc=24, batch_size=24, remove_columns=ds['train'].features.keys())
     print(ds['train'][0])
     print(ds)
     ds.save_to_disk(output_ds_dir)
