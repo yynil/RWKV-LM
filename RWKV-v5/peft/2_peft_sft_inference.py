@@ -7,6 +7,7 @@ sys.path.append(src_dir)
 import torch
 import traceback
 from rwkv.rwkv_tokenizer import TRIE_TOKENIZER
+from src.model_for_classification import RwkvForClassification_Run
 def load_ckpt_and_parse_args(ckpt_file, args):
     try:
         with torch.no_grad():
@@ -56,11 +57,10 @@ def load_ckpt_and_parse_args(ckpt_file, args):
         return None
 
 
-def inference(model: RwkvForClassification_Run, template: str, tokenizer :TRIE_TOKENIZER,query :str, document :str):
+def inference_ce(model: RwkvForClassification_Run, tokenizer :TRIE_TOKENIZER,query :str, document :str):
     cls_id = 1
-    input_str = template.format(query=query,document=document)
-    print(input_str)
-    input_ids = tokenizer.encode(input_str)+[cls_id]
+    sep_id = 2
+    input_ids = tokenizer.encode(query)+[sep_id]+tokenizer.encode(document)+[cls_id]
     from torch.amp import autocast
     with autocast(device_type='cuda',dtype=torch.bfloat16):
         logits = model(torch.tensor([input_ids]).long())
@@ -73,77 +73,56 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', type=str, default='/media/yueyulin/bigdata/models/rwkv5/RWKV-5-World-1B5-v2-20231025-ctx4096.pth')
     parser.add_argument('--lora_ckpt', type=str, default='/media/yueyulin/bigdata/models/lora/rwkv1b5/ce_att_ffn/trainable_model_140000/')
     args = parser.parse_args()
-    if args.type == 'full':
-        w  = load_full_ckpt_and_parse_args(args.ckpt, args)
-        from src.model_run import RWKV
-        model = RWKV(args)
-        model = RwkvForClassification_Run(model, args.num_labels)
-        inform = model.load_state_dict(w,strict=False)
-        print(model)
-        print(inform)
-        query = "中华人民共和国是什么时候成立的？"
-        document_positive = "中华人民共和国（the People's Republic of China），简称“中国”，成立于1949年10月1日 [1]，位于亚洲东部，太平洋西岸 [2]，是工人阶级领导的、以工农联盟为基础的人民民主专政的社会主义国家 [3]，以五星红旗为国旗 [4]、《义勇军进行曲》为国歌 [5]，国徽中间是五星照耀下的天安门，周围是谷穗和齿轮 [6] [170]，通用语言文字是普通话和规范汉字 [7]，首都北京 [8]，是一个以汉族为主体、56个民族共同组成的统一的多民族国家。中国陆地面积约960万平方千米，东部和南部大陆海岸线1.8万多千米，海域总面积约473万平方千米 [2]。海域分布有大小岛屿7600多个，其中台湾岛最大，面积35798平方千米 [2]。中国同14国接壤，与8国海上相邻。省级行政区划为23个省、5个自治区、4个直辖市、2个特别行政区。 [2]"
-        document_negative = "河北省，简称“冀”，是中华人民共和国省级行政区，省会石家庄，位于北纬36°05′-42°40′，东经113°27′-119°50′之间，环抱首都北京市，东与天津市毗连并紧傍渤海，东南部、南部衔山东省、河南省，西倚太行山与山西为邻，西北部、北部与内蒙古自治区交界，东北部与辽宁省接壤，总面积18.88万平方千米。 [1-2]河北省下辖11个地级市，共有49个市辖区、21个县级市、91个县、6个自治县。 [4-5]截至2022年末，河北省常住人口为7420万人。 [3] [132]"
-        document_negative = "美国原为印第安人聚居地。15世纪末，西班牙、荷兰、法国、英国等开始向北美移民。到1773年，英已建立13个殖民地。1775年，爆发独立战争。1776年7月4日，通过《独立宣言》，正式宣布建立美利坚合众国。1787年，制定联邦宪法，南方为蓄奴州，北方为自由州。1865年南北战争结束，美国开始全面实行资本主义。建国后的领土几乎扩张了10倍。 [1]"
-        
-        import os
-        tokenizer = TRIE_TOKENIZER(os.path.dirname(os.path.abspath(__file__)) + '/rwkv_vocab_v20230424.txt' )
-        model = model.bfloat16()
-        model = model.to('cuda')
-        model.eval()
 
-        inference(model, template, tokenizer, query, document_positive)
-        inference(model, template, tokenizer, query, document_negative)
-    elif args.type == 'lora':
-        w = load_ckpt_and_parse_args(args.ckpt, args)
-        from src.model_run import RWKV
-        model = RWKV(args)
-        inform = model.load_state_dict(w,strict=False)
-        del w 
-        #list lora_ckpt as directory
-        import os
-        if not os.path.isdir(args.lora_ckpt):
-            print('lora_ckpt should be a directory')
-            exit(-1)
-        files = os.listdir(args.lora_ckpt)
-        ckpt_file = None
-        lora_config = None
-        for file in files:
-            if file.endswith('.pth'):
-                ckpt_file = os.path.join(args.lora_ckpt,file)
-            elif file.endswith('.json'):
-                lora_config = os.path.join(args.lora_ckpt,file)
-            
-            if ckpt_file is not None and lora_config is not None:
-                break
-        print('load ckpt from ',ckpt_file,' and config from ',lora_config)
-        w = torch.load(ckpt_file, map_location='cpu')
-        num_labels = w['score.weight'].shape[0]
-        import json
-        from peft import LoraConfig,TaskType,inject_adapter_in_model
-        with open(lora_config,'r') as f:
-            lora_obj = json.load(f)
-            lora_config = LoraConfig(
-                task_type=TaskType.CAUSAL_LM,
-                lora_alpha=lora_obj['lora_alpha'],
-                lora_dropout=0,
-                r=lora_obj['r'],
-                bias=lora_obj['bias'],
-                target_modules=lora_obj['target_modules'],)
-            print(lora_config)
-        model = inject_adapter_in_model(lora_config,model)
-        model = RwkvForClassification_Run(model, num_labels)
-        print(model)
-        inform = model.load_state_dict(w,strict=False)
-        import os
-        tokenizer = TRIE_TOKENIZER(os.path.dirname(os.path.abspath(__file__)) + '/rwkv_vocab_v20230424.txt' )
-        model = model.bfloat16()
-        model = model.to('cuda')
-        model.eval()
-        query = "中华人民共和国是什么时候成立的？"
-        document_positive = "中华人民共和国（the People's Republic of China），简称“中国”，成立于1949年10月1日 [1]，位于亚洲东部，太平洋西岸 [2]，是工人阶级领导的、以工农联盟为基础的人民民主专政的社会主义国家 [3]，以五星红旗为国旗 [4]、《义勇军进行曲》为国歌 [5]，国徽中间是五星照耀下的天安门，周围是谷穗和齿轮 [6] [170]，通用语言文字是普通话和规范汉字 [7]，首都北京 [8]，是一个以汉族为主体、56个民族共同组成的统一的多民族国家。中国陆地面积约960万平方千米，东部和南部大陆海岸线1.8万多千米，海域总面积约473万平方千米 [2]。海域分布有大小岛屿7600多个，其中台湾岛最大，面积35798平方千米 [2]。中国同14国接壤，与8国海上相邻。省级行政区划为23个省、5个自治区、4个直辖市、2个特别行政区。 [2]"
-        document_negative = "河北省，简称“冀”，是中华人民共和国省级行政区，省会石家庄，位于北纬36°05′-42°40′，东经113°27′-119°50′之间，环抱首都北京市，东与天津市毗连并紧傍渤海，东南部、南部衔山东省、河南省，西倚太行山与山西为邻，西北部、北部与内蒙古自治区交界，东北部与辽宁省接壤，总面积18.88万平方千米。 [1-2]河北省下辖11个地级市，共有49个市辖区、21个县级市、91个县、6个自治县。 [4-5]截至2022年末，河北省常住人口为7420万人。 [3] [132]"
-        document_negative = "美国原为印第安人聚居地。15世纪末，西班牙、荷兰、法国、英国等开始向北美移民。到1773年，英已建立13个殖民地。1775年，爆发独立战争。1776年7月4日，通过《独立宣言》，正式宣布建立美利坚合众国。1787年，制定联邦宪法，南方为蓄奴州，北方为自由州。1865年南北战争结束，美国开始全面实行资本主义。建国后的领土几乎扩张了10倍。 [1]"
+    w = load_ckpt_and_parse_args(args.ckpt, args)
+    from src.model_run import RWKV
+    model = RWKV(args)
+    inform = model.load_state_dict(w,strict=False)
+    del w 
+    #list lora_ckpt as directory
+    import os
+    if not os.path.isdir(args.lora_ckpt):
+        print('lora_ckpt should be a directory')
+        exit(-1)
+    files = os.listdir(args.lora_ckpt)
+    ckpt_file = None
+    lora_config = None
+    for file in files:
+        if file.endswith('.pth'):
+            ckpt_file = os.path.join(args.lora_ckpt,file)
+        elif file.endswith('.json'):
+            lora_config = os.path.join(args.lora_ckpt,file)
         
-        inference(model, template, tokenizer, query, document_positive)
-        inference(model, template, tokenizer, query, document_negative)
+        if ckpt_file is not None and lora_config is not None:
+            break
+    print('load ckpt from ',ckpt_file,' and config from ',lora_config)
+    w = torch.load(ckpt_file, map_location='cpu')
+    num_labels = w['score.weight'].shape[0]
+    import json
+    from peft import LoraConfig,TaskType,inject_adapter_in_model
+    with open(lora_config,'r') as f:
+        lora_obj = json.load(f)
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            lora_alpha=lora_obj['lora_alpha'],
+            lora_dropout=0,
+            r=lora_obj['r'],
+            bias=lora_obj['bias'],
+            target_modules=lora_obj['target_modules'],)
+        print(lora_config)
+    model = inject_adapter_in_model(lora_config,model)
+    model = RwkvForClassification_Run(model, num_labels)
+    print(model)
+    inform = model.load_state_dict(w,strict=False)
+    import os
+    tokenizer = TRIE_TOKENIZER(os.path.dirname(os.path.abspath(__file__)) + '/rwkv_vocab_v20230424.txt' )
+    model = model.bfloat16()
+    model = model.to('cuda')
+    model.eval()
+    query = "中华人民共和国是什么时候成立的？"
+    document_positive = "中华人民共和国（the People's Republic of China），简称“中国”，成立于1949年10月1日 [1]，位于亚洲东部，太平洋西岸 [2]，是工人阶级领导的、以工农联盟为基础的人民民主专政的社会主义国家 [3]，以五星红旗为国旗 [4]、《义勇军进行曲》为国歌 [5]，国徽中间是五星照耀下的天安门，周围是谷穗和齿轮 [6] [170]，通用语言文字是普通话和规范汉字 [7]，首都北京 [8]，是一个以汉族为主体、56个民族共同组成的统一的多民族国家。中国陆地面积约960万平方千米，东部和南部大陆海岸线1.8万多千米，海域总面积约473万平方千米 [2]。海域分布有大小岛屿7600多个，其中台湾岛最大，面积35798平方千米 [2]。中国同14国接壤，与8国海上相邻。省级行政区划为23个省、5个自治区、4个直辖市、2个特别行政区。 [2]"
+    document_negative = "河北省，简称“冀”，是中华人民共和国省级行政区，省会石家庄，位于北纬36°05′-42°40′，东经113°27′-119°50′之间，环抱首都北京市，东与天津市毗连并紧傍渤海，东南部、南部衔山东省、河南省，西倚太行山与山西为邻，西北部、北部与内蒙古自治区交界，东北部与辽宁省接壤，总面积18.88万平方千米。 [1-2]河北省下辖11个地级市，共有49个市辖区、21个县级市、91个县、6个自治县。 [4-5]截至2022年末，河北省常住人口为7420万人。 [3] [132]"
+    # document_negative = "美国原为印第安人聚居地。15世纪末，西班牙、荷兰、法国、英国等开始向北美移民。到1773年，英已建立13个殖民地。1775年，爆发独立战争。1776年7月4日，通过《独立宣言》，正式宣布建立美利坚合众国。1787年，制定联邦宪法，南方为蓄奴州，北方为自由州。1865年南北战争结束，美国开始全面实行资本主义。建国后的领土几乎扩张了10倍。 [1]"
+    
+    inference_ce(model, tokenizer, query, document_positive)
+    inference_ce(model, tokenizer, query, document_negative)
