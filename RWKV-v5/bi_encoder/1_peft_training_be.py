@@ -242,7 +242,7 @@ if __name__ == '__main__':
     args.pre_ffn = 0
     args.head_size_divisor = 8
     args.ctx_len = cmd_args.ctx_len
-    args.dropout = 0
+    args.dropout = 0.05
     args.head_qk = 0
     args.grad_cp = 0
     args.save_per_batches = 10000
@@ -335,7 +335,7 @@ if __name__ == '__main__':
     print("总参数数量：", total_params)
     print("比例：", trainable_params / total_params)
     model = model.bfloat16()
-    model = model.to(device)
+    # model = model.to(device)
     data_file = cmd_args.ds_dir
     from datasets_utilities import load_cross_encoder_ds_from_disk
     train_data = load_cross_encoder_ds_from_disk(data_file,cmd_args.ctx_len)
@@ -387,7 +387,7 @@ if __name__ == '__main__':
     args.my_exit_tokens = 0
     args.proj_dir = cmd_args.output_dir
     args.my_timestamp = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    args.wandb = 'rwkv5_bi_encoder_att_ffn'
+    args.wandb = 'rwkv5_7b_a100_bi_encoder_att_ffn'
     args.run_name = 'yy' 
     args.my_qa_mask = 0
     args.num_nodes = 1
@@ -405,7 +405,7 @@ if __name__ == '__main__':
 
     
 
-    trainer = Trainer(accelerator=device,strategy="auto",devices=1,num_nodes=1,precision=precision,
+    trainer = Trainer(accelerator=device,strategy="deepspeed_stage_2_offload",devices='auto',num_nodes=1,precision=precision,
             logger=args.logger,callbacks=[YueyuTrainCallback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
             log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
 

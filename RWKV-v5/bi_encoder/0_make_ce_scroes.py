@@ -108,8 +108,10 @@ def load_full_ckpt_and_parse_args(ckpt_file, args):
 
 def inference(model: RwkvForClassification_Run, template: str, tokenizer :TRIE_TOKENIZER,query :str, document :str):
     cls_id = 1
-    input_str = template.format(query=query,document=document)
-    input_ids = tokenizer.encode(input_str)+[cls_id]
+    sep_id = 2
+    # input_str = template.format(query=query,document=document)
+    # input_ids = tokenizer.encode(input_str)+[cls_id]
+    input_ids = tokenizer.encode(query)+[sep_id]+tokenizer.encode(document)+[cls_id]
     from torch.amp import autocast
     with autocast(device_type='cuda',dtype=torch.bfloat16):
         logits = model(torch.tensor([input_ids]).long())
@@ -118,14 +120,15 @@ def inference(model: RwkvForClassification_Run, template: str, tokenizer :TRIE_T
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--type', type=str, default='full', choices=['full', 'lora'])
-    parser.add_argument('--ckpt', type=str, default='/media/yueyulin/bigdata/models/ft/rwkv04b/ce/trainable_model_100000/RWKV-5-World-0.4B-v2-20231113-ctx4096_ce.pth')
-    parser.add_argument('--lora_ckpt', type=str, default=None)
-    parser.add_argument('--triple_file',type=str,default="/home/yueyulin/下载/google/triples.train.ids.small.tsv")
-    parser.add_argument('--output_dir',type=str,default="/media/yueyulin/bigdata/ds/mmarco_chinese/ce_scores/lora")
+    parser.add_argument('--type', type=str, default='lora', choices=['full', 'lora'])
+    parser.add_argument('--ckpt', type=str, default='/home/gpu/data/sdb1/models/rwkv/RWKV-5-World-7B-v2-20240128-ctx4096.pth')
+    parser.add_argument('--lora_ckpt', type=str, default='/home/gpu/data/sdb1/models/rwkv/lora/RWKV5_7B/ce_att_ffn_1k_mmarcro_chinese/trainable_model_90000')
+    parser.add_argument('--triple_file',type=str,default="/home/gpu/data/sdb1/downloads/google_data/triples.train.ids.small.tsv")
+    parser.add_argument('--output_dir',type=str,default="/home/gpu/data/sdb1/downloads/google_data")
     parser.add_argument('--start_index',type=int,default=0)
-    parser.add_argument('--end_index',type=int,default=100000)
-    template = "【问题：{query}\n文档：{document}\n】" 
+    parser.add_argument('--end_index',type=int,default=1000000)
+    parser.add_argument('--device',type=str,default='cuda:0')
+    template = None 
     args = parser.parse_args()
     if args.type == 'full':
         w  = load_full_ckpt_and_parse_args(args.ckpt, args)
@@ -186,27 +189,31 @@ if __name__ == '__main__':
                 target_modules=lora_obj['target_modules'],)
             print(lora_config)
         model = inject_adapter_in_model(lora_config,model)
-        model = RwkvForClassification_Run(model, num_labels)
+        model = RwkvForClassification_Run(model, num_labels,device=args.device)
         print(model)
         inform = model.load_state_dict(w,strict=False)
         import os
         tokenizer = TRIE_TOKENIZER(os.path.dirname(os.path.abspath(__file__)) + '/rwkv_vocab_v20230424.txt' )
         model = model.bfloat16()
-        model = model.to('cuda')
+        model = model.to(args.device)
         model.eval()
-        query = "河北和什么省接壤？"
+        query = "中华人民共和国是什么时候成立的？"
         document_positive = "中华人民共和国（the People's Republic of China），简称“中国”，成立于1949年10月1日 [1]，位于亚洲东部，太平洋西岸 [2]，是工人阶级领导的、以工农联盟为基础的人民民主专政的社会主义国家 [3]，以五星红旗为国旗 [4]、《义勇军进行曲》为国歌 [5]，国徽中间是五星照耀下的天安门，周围是谷穗和齿轮 [6] [170]，通用语言文字是普通话和规范汉字 [7]，首都北京 [8]，是一个以汉族为主体、56个民族共同组成的统一的多民族国家。中国陆地面积约960万平方千米，东部和南部大陆海岸线1.8万多千米，海域总面积约473万平方千米 [2]。海域分布有大小岛屿7600多个，其中台湾岛最大，面积35798平方千米 [2]。中国同14国接壤，与8国海上相邻。省级行政区划为23个省、5个自治区、4个直辖市、2个特别行政区。 [2]"
         document_negative = "河北省，简称“冀”，是中华人民共和国省级行政区，省会石家庄，位于北纬36°05′-42°40′，东经113°27′-119°50′之间，环抱首都北京市，东与天津市毗连并紧傍渤海，东南部、南部衔山东省、河南省，西倚太行山与山西为邻，西北部、北部与内蒙古自治区交界，东北部与辽宁省接壤，总面积18.88万平方千米。 [1-2]河北省下辖11个地级市，共有49个市辖区、21个县级市、91个县、6个自治县。 [4-5]截至2022年末，河北省常住人口为7420万人。 [3] [132]"
-        inference(model, template, tokenizer, query, document_positive)
-        inference(model, template, tokenizer, query, document_negative)
+        print(inference(model, template, tokenizer, query, document_positive))
+        print(inference(model, template, tokenizer, query, document_negative))
 
     
 
     from tqdm import tqdm
     from datasets import load_dataset
-    cross_encoder_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cross_encoder')
-    script_file = os.path.join(cross_encoder_dir, "cross_encoder_ds.py")
-    dataset = load_dataset(script_file,"chinese", data_dir="/home/yueyulin/下载/google")
+    if args.triple_file.endswith('.tsv'):
+        cross_encoder_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cross_encoder')
+        script_file = os.path.join(cross_encoder_dir, "cross_encoder_ds.py")
+        cache_dir = os.path.join(cross_encoder_dir, "cache")
+        dataset = load_dataset(script_file,"chinese", data_dir="/home/gpu/data/sdb1/downloads/google_data",cache_dir=cache_dir)
+    elif args.triple_file.endswith('.jsonl'):
+        dataset = load_dataset('json', data_files=args.triple_file)
     print(dataset['train'][1])
 
     length = len(dataset['train'])
