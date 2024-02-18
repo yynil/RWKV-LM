@@ -5,7 +5,9 @@ current_dir = os.path.dirname(__file__)
 script_file = os.path.join(current_dir, "cross_encoder_ds.py")
 dataset = load_dataset(script_file,"chinese", data_dir="/home/yueyulin/下载/google")
 print(dataset['train'][1])
-
+#set huggingface cache dir to current directory's cache_data
+os.environ["HF_HOME"] = os.path.join(current_dir, "cache_data")
+sep_id = 2
 def convert_example(examples):
     queries = examples['query']
     positives = examples['positive']

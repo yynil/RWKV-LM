@@ -242,14 +242,14 @@ if __name__ == '__main__':
     args.pre_ffn = 0
     args.head_size_divisor = 8
     args.ctx_len = cmd_args.ctx_len
-    args.dropout = 0
+    args.dropout = 0.05
     args.head_qk = 0
     args.grad_cp = 0
     args.save_per_batches = 10000
     args.my_exit = 3
     import os
     os.environ['RWKV_JIT_ON'] = '0'
-    os.environ['RWKV_T_MAX'] = '4096'
+    os.environ['RWKV_T_MAX'] = '1024'
     if torch.backends.mps.is_available():
         os.environ['RWKV_FLOAT_MODE'] = 'fp32'
         precision = "fp32"
@@ -333,7 +333,7 @@ if __name__ == '__main__':
     print("总参数数量：", total_params)
     print("比例：", trainable_params / total_params)
     model = model.bfloat16()
-    model = model.to(device)
+    # model = model.to(device)
     data_file = cmd_args.ds_dir
     from datasets_utilities import load_cross_encoder_ds_from_disk
     train_data = load_cross_encoder_ds_from_disk(data_file,cmd_args.ctx_len)
@@ -371,7 +371,7 @@ if __name__ == '__main__':
     args.my_pile_edecay = 0
     args.layerwise_lr = 1
     args.epoch_begin = 0
-    args.epoch_count = 1111 
+    args.epoch_count = 5
     args.epoch_save = 1
     args.epoch_steps = 1000
     args.max_epochs = args.epoch_count
@@ -388,6 +388,7 @@ if __name__ == '__main__':
         args.wandb = 'rwkv5_cross_encoder_att_ffn_7b'
     else:
         args.wandb = 'rwkv5_cross_encoder_att_ffn_'+args.model_file.split('/')[-1]
+    args.wandb = 'yy_a100_8x_rwkv7b'
     args.run_name = 'yy' 
     args.my_qa_mask = 0
     args.num_nodes = 1
@@ -405,7 +406,7 @@ if __name__ == '__main__':
 
     
 
-    trainer = Trainer(accelerator=device,strategy="deepspeed_stage_2_offload",devices=1,num_nodes=1,precision=precision,
+    trainer = Trainer(accelerator=device,strategy="deepspeed_stage_2_offload",devices='auto',num_nodes=1,precision='bf16-mixed',
             logger=args.logger,callbacks=[YueyuTrainCallback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
             log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
 
