@@ -52,6 +52,7 @@ elif torch.cuda.is_available():
     sources = [os.path.join(cuda_dir,'RWKV5Ops_run.cu'),os.path.join(cuda_dir,'RWKV5Ops_run.cpp')]
     wkv5_cuda = load(name="wkv5_run", sources=sources, verbose=True,
                     extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}"] )
+    print('compile cuda kernel successfully',wkv5_cuda)
 class WKV_5(torch.autograd.Function):
     if torch.backends.mps.is_available():
         @staticmethod
@@ -173,7 +174,8 @@ class RWKV_TimeMix_RWKV5(MyModule):
         xx = x[-1,:]
         r, k, v, g = self.jit_func(x,state_xx)
         #state_kv is (n_head,head_size,head_size)
-        x,s = RUN_CUDA_RWKV5(1, T, C, H, state_kv.transpose(-1,-2).contiguous(),r, k, v, w=self.time_decay, u=self.time_faaaa)
+        B = 1
+        x,s = RUN_CUDA_RWKV5(B, T, C, H, state_kv.transpose(-1,-2).contiguous(),r, k, v, w=self.time_decay, u=self.time_faaaa)
         s = s.transpose(-1,-2)
         x = self.jit_func_2(x, g).squeeze(0)
         return x,xx,s
