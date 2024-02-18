@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--cls_token_id', type=int, help='ID of the classification token')
     parser.add_argument('--is_truncate', action='store_true', help='是否截断数据')
     parser.add_argument('--pad_token_id', type=int, help='ID of the padding token')
+    parser.add_argument('--ds_name',default='zh_part',type=str,help='dataset name')
     args = parser.parse_args()
 
     ds_dir = args.ds_dir
@@ -56,8 +57,9 @@ if __name__ == '__main__':
 
     parent_dir = os.path.dirname(ds_dir)
     ds = load_from_disk(ds_dir)
+    ds_name = args.ds_name
     
-    output_ds_dir = f'{parent_dir}/natural_questions_10_200_docs_q_p_n_tokenized_ds_padded_{max_length}_cls_{cls_token_id}_sep_{sep_token_id}_truncate_{is_truncate}_pad_{pad_token_id}'
+    output_ds_dir = f'{parent_dir}/{ds_name}_q_p_n_tokenized_ds_padded_{max_length}_cls_{cls_token_id}_sep_{sep_token_id}_truncate_{is_truncate}_pad_{pad_token_id}'
 
     from functools import partial
     pad_and_truncate_examples_fn = partial(pad_and_truncate_examples, max_length=max_length, sep_token_id=sep_token_id, cls_token_id=cls_token_id, is_truncate=is_truncate, pad_token_id=pad_token_id)
